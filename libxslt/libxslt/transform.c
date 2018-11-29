@@ -816,13 +816,32 @@ xsltAddTextString(xsltTransformContextPtr ctxt, xmlNodePtr target,
         return(target);
 
     if (ctxt->lasttext == target->content) {
+        int minSize;
 
-	if (ctxt->lasttuse + len >= ctxt->lasttsize) {
+        /* Check for integer overflow accounting for NUL terminator. */
+        if (len >= INT_MAX - ctxt->lasttuse) {
+            xsltTransformError(ctxt, NULL, target,
+                "xsltCopyText: text allocation failed\n");
+            return(NULL);
+        }
+        minSize = ctxt->lasttuse + len + 1;
+
+        if (ctxt->lasttsize < minSize) {
 	    xmlChar *newbuf;
 	    int size;
+            int extra;
 
-	    size = ctxt->lasttsize + len + 100;
-	    size *= 2;
+            /* Double buffer size but increase by at least 100 bytes. */
+            extra = minSize < 100 ? 100 : minSize;
+
+            /* Check for integer overflow. */
+            if (extra > INT_MAX - ctxt->lasttsize) {
+                size = INT_MAX;
+            }
+            else {
+                size = ctxt->lasttsize + extra;
+            }
+
 	    newbuf = (xmlChar *) xmlRealloc(target->content,size);
 	    if (newbuf == NULL) {
 		xsltTransformError(ctxt, NULL, target,
@@ -2675,6 +2694,18 @@ xsltApplySequenceConstructor(xsltTransformContextPtr ctxt,
 			"xsltApplySequenceConstructor: extension construct %s\n",
 			cur->name));
 #endif
+                    /*
+                     * Disable the xsltCopyTextString optimization for
+                     * extension elements. Extensions could append text using
+                     * xmlAddChild which will free the buffer pointed to by
+                     * 'lasttext'. This buffer could later be reallocated with
+                     * a different size than recorded in 'lasttsize'. See bug
+                     * #777432.
+                     */
+                    if (cur->psvi == xsltExtMarker) {
+                        ctxt->lasttext = NULL;
+                    }
+
 		    ctxt->insert = insert;
 		    /*
 		    * We need the fragment base for extension instructions
@@ -2867,6 +2898,18 @@ xsltApplySequenceConstructor(xsltTransformContextPtr ctxt,
 		    "xsltApplySequenceConstructor: extension construct %s\n",
                     cur->name));
 #endif
+
+                /*
+                 * Disable the xsltCopyTextString optimization for
+                 * extension elements. Extensions could append text using
+                 * xmlAddChild which will free the buffer pointed to by
+                 * 'lasttext'. This buffer could later be reallocated with
+                 * a different size than recorded in 'lasttsize'. See bug
+                 * #777432.
+                 */
+                if (cur->psvi == xsltExtMarker) {
+	            ctxt->lasttext = NULL;
+                }
 
                 ctxt->insert = insert;
 		/*
